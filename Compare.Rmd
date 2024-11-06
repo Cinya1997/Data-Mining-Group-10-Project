@@ -1,0 +1,276 @@
+---
+title: "result lift"
+output: html_document
+date: "2024-10-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+# 加载必要的库
+library(ggplot2)
+
+# 创建混淆矩阵数据
+confusion_matrix <- data.frame(
+  Method = c("KNN", "Logistic Regression", "Naive Bayes", "Decision Tree", "Neural Network", "Support Vector Machine","Random Forest", "Gradient Boosted", "XGBoost"),
+  TP = c(83, 293, 481, 5238, 21, 273,0, 6, 152),
+  FN = c(403, 193, 5, 275, 65, 213,486, 478, 334),
+  FP = c(738, 2080, 5404, 470, 2950,2182, 0, 21, 1304),
+  TN = c(4775, 3433, 110, 16, 2963,3332, 5513, 5495, 4209)
+)
+
+# 计算每个模型的正类和负类预测概率
+confusion_matrix$P_Positive <- round(confusion_matrix$TP / (confusion_matrix$TP + confusion_matrix$FP), 4)
+confusion_matrix$P_Negative <- round(confusion_matrix$TN / (confusion_matrix$TN + confusion_matrix$FN), 4)
+
+# 输出混淆矩阵和预测概率
+print(confusion_matrix)
+
+# 计算Lift值的函数
+calculate_lift <- function(pred_probs, true_labels) {
+  df <- data.frame(prob = pred_probs, true = true_labels)
+  df <- df[order(-df$prob), ]  # 按概率降序排序
+  total_pos <- sum(df$true)  # 正类总数
+  df$rank <- 1:nrow(df)  # 添加排名
+  
+  # 计算提升
+  lift <- cumsum(df$true) / (1:nrow(df)) / (total_pos / nrow(df))
+  return(lift)  # 返回提升值
+}
+
+# 假设的真实标签
+set.seed(123)
+n_samples <- 28001 + 6000 + 5999  # 总样本数
+
+# 假设的真实标签，8.11%的拒绝率
+true_label <- c(rep(1, round(n_samples * 0.0811)), rep(0, n_samples - round(n_samples * 0.0811)))
+
+# 创建一个数据框用于计算Lift
+lift_data <- data.frame(
+  Rank = 1:n_samples
+)
+
+# 为每个模型生成假设的预测概率
+for (i in 1:nrow(confusion_matrix)) {
+  lift_data[[paste0(confusion_matrix$Method[i], "_prob")]] <- rep(confusion_matrix$P_Positive[i], n_samples)
+}
+
+# 计算每个模型的Lift
+for (i in 1:nrow(confusion_matrix)) {
+  lift_data[[paste0(confusion_matrix$Method[i], "_lift")]] <- calculate_lift(lift_data[[paste0(confusion_matrix$Method[i], "_prob")]], true_label)
+}
+
+# 绘制Lift Chart
+ggplot() +
+  geom_line(data = lift_data, aes(x = Rank, y = KNN_lift, color = "KNN"), linewidth = 1.2) +
+  geom_line(data = lift_data, aes(x = Rank, y = `Logistic Regression_lift`, color = "Logistic Regression"), linewidth = 1.2) +
+  geom_line(data = lift_data, aes(x = Rank, y = `Naive Bayes_lift`, color = "Naive Bayes"), linewidth = 1.2) +
+  geom_line(data = lift_data, aes(x = Rank, y = `Decision Tree_lift`, color = "Decision Tree"), linewidth = 1.2) +
+  geom_line(data = lift_data, aes(x = Rank, y = `Neural Network_lift`, color = "Neural Network"), linewidth = 1.2) +
+  geom_line(data = lift_data, aes(x = Rank, y = `Random Forest_lift`, color = "Random Forest"), linewidth = 1.2) +
+  geom_line(data = lift_data, aes(x = Rank, y = `Support Vector Machine_lift`, color = "Support Vector Machine"), linewidth = 1.2) +
+  geom_line(data = lift_data, aes(x = Rank, y = `Gradient Boosted_lift`, color = "Gradient Boosted"), linewidth = 1.2) +
+  geom_line(data = lift_data, aes(x = Rank, y = `XGBoost_lift`, color = "XGBoost"), linewidth = 1.2) +
+  labs(title = "Lift Chart", x = "Sample Rank", y = "Lift") +
+  scale_color_manual(name = "Models", 
+                     values = c("KNN" = "blue", 
+                                "Logistic Regression" = "red", 
+                                "Naive Bayes" = "green", 
+                                "Decision Tree" = "orange", 
+                                "Neural Network" = "purple", 
+                                "Random Forest" = "brown", 
+                                "Support Vector Machine" = "yellow",
+                                "XGBoost" = "cyan", 
+                                "Gradient Boosted" = "pink")) +
+  theme_minimal()
+
+# 打印每个模型的正类和负类的分布
+cat("正类和负类的分布:\n")
+cat("训练集：", 28401, "条记录，拒绝率：8.11%\n")
+cat("验证集：", 6000, "条记录，拒绝率：8.10%\n")
+cat("测试集：", 5999, "条记录，拒绝率：8.10%\n")
+
+
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+# 加载所需库
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+
+# 为每个模型生成假设的预测概率
+for (i in 1:nrow(confusion_matrix)) {
+  # 生成不同的概率，确保每个模型的预测概率是不同的
+  # 这里的逻辑是使用混淆矩阵的数据，生成适当的随机波动，以避免相同的预测概率
+  lift_data[[paste0(confusion_matrix$Method[i], "_prob")]] <- 
+    rnorm(n_samples, mean = confusion_matrix$P_Positive[i], sd = 0.01) %>% 
+    pmin(1) %>% 
+    pmax(0)  # 确保概率在[0, 1]范围内
+}
+
+# 计算提升的函数
+calculate_lift <- function(pred_probs, true_labels) {
+  df <- data.frame(prob = pred_probs, true = true_labels)
+  df <- df[order(-df$prob), ]  # 按概率降序排序
+  total_pos <- sum(df$true)  # 正类总数
+  df$rank <- 1:nrow(df)  # 添加排名
+  
+  # 计算提升
+  lift <- cumsum(df$true) / (1:nrow(df)) / (total_pos / nrow(df))
+  return(lift)  # 返回提升值
+}
+
+# 计算每个模型的Lift
+for (i in 1:nrow(confusion_matrix)) {
+  lift_data[[paste0(confusion_matrix$Method[i], "_lift")]] <- 
+    calculate_lift(lift_data[[paste0(confusion_matrix$Method[i], "_prob")]], true_label)
+}
+
+# 将数据框转换为长格式以便绘图
+lift_data_long <- lift_data %>%
+  select(Rank, ends_with("_lift")) %>%
+  pivot_longer(cols = -Rank, names_to = "Model", values_to = "Lift")
+
+# 绘制Lift图
+ggplot(lift_data_long, aes(x = Rank, y = Lift, color = Model)) +
+  geom_line(size = 1) +
+  labs(title = "Lift Chart Comparison of Models", x = "Rank", y = "Lift Value") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  scale_color_brewer(palette = "Set1")  # 设置颜色
+
+```
+
+
+```{r ROC NON-OVERSAMPLE}
+# 加载必要的库
+library(ggplot2)
+library(dplyr)
+
+# 创建混淆矩阵数据框
+confusion_matrix <- data.frame(
+  Method = c("KNN", "Logistic Regression", "Naive Bayes", "Decision Tree", 
+             "Neural Network", "Random Forest", "Gradient Boosted", "XGBoost"),
+  TP = c(5513, 5513, 110, 308, 1, 5504, 5509, 5452),
+  FN = c(484, 486, 5, 2357, 948, 486, 491, 464),
+  FP = c(0, 0, 5404, 178, 10929, 10, 0, 61),
+  TN = c(2, 0, 481, 3156, 8, 0, 0, 22)
+)
+
+# 计算真正率和假正率
+confusion_matrix <- confusion_matrix %>%
+  mutate(
+    TPR = TP / (TP + FN),  # 真正率
+    FPR = FP / (FP + TN)   # 假正率
+  )
+
+# 创建一个数据框来存储 ROC 曲线数据
+roc_data <- data.frame()
+
+# 为每个模型计算并添加 FPR 和 TPR
+for (i in 1:nrow(confusion_matrix)) {
+  model_name <- confusion_matrix$Method[i]
+  tpr <- c(0, confusion_matrix$TPR[i], 1)  # 添加边界值
+  fpr <- c(0, confusion_matrix$FPR[i], 1)  # 添加边界值
+  
+  # 创建每个模型的ROC数据框
+  model_roc <- data.frame(FPR = fpr, TPR = tpr, Method = model_name)
+  
+  # 将当前模型的ROC数据框合并到主数据框中
+  roc_data <- rbind(roc_data, model_roc)
+}
+
+# 绘制ROC曲线
+ggplot(roc_data, aes(x = FPR, y = TPR, color = Method)) +
+  geom_line(size = 1) +  # 曲线
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +  # 45度参考线
+  labs(title = "ROC Curve by Model", x = "False Positive Rate", y = "True Positive Rate") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+```
+```{r ROC OVERSAMPLE}
+# 加载必要的库
+library(ggplot2)
+library(dplyr)
+
+# 计算真正率和假正率
+confusion_matrix <- confusion_matrix %>%
+  mutate(
+    TPR = TP / (TP + FN),  # 真正率
+    FPR = FP / (FP + TN)   # 假正率
+  )
+
+# 创建一个数据框来存储 ROC 曲线数据
+roc_data <- data.frame()
+
+# 为每个模型计算并添加 FPR 和 TPR
+for (i in 1:nrow(confusion_matrix)) {
+  model_name <- confusion_matrix$Method[i]
+  tpr <- c(0, confusion_matrix$TPR[i], 1)  # 添加边界值
+  fpr <- c(0, confusion_matrix$FPR[i], 1)  # 添加边界值
+  
+  # 创建每个模型的ROC数据框
+  model_roc <- data.frame(FPR = fpr, TPR = tpr, Method = model_name)
+  
+  # 将当前模型的ROC数据框合并到主数据框中
+  roc_data <- rbind(roc_data, model_roc)
+}
+
+# 绘制ROC曲线
+ggplot(roc_data, aes(x = FPR, y = TPR, color = Method)) +
+  geom_line(size = 1) +  # 曲线
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +  # 45度参考线
+  labs(title = "ROC Curve by Model", x = "False Positive Rate", y = "True Positive Rate") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+```
+
+
+
+```{r}
+# 计算准确率和F1分数
+confusion_matrix <- confusion_matrix %>%
+  mutate(
+    Accuracy = (TP + TN) / (TP + FP + FN + TN),
+    Precision = TP / (TP + FP),
+    Recall = TP / (TP + FN),
+    F1_Score = 2 * (Precision * Recall) / (Precision + Recall)
+  )
+
+# 绘制准确率和F1分数条形图
+library(ggplot2)
+
+# 准确率图
+ggplot(confusion_matrix, aes(x = Method, y = Accuracy, fill = Method)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Model Accuracy Comparison", y = "Accuracy") +
+  theme_minimal()
+
+# F1分数图
+ggplot(confusion_matrix, aes(x = Method, y = F1_Score, fill = Method)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Model F1 Score Comparison", y = "F1 Score") +
+  theme_minimal()
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+

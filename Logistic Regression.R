@@ -1,0 +1,171 @@
+## ----setup, include=FALSE----------------------------------------------------------------------------------------------------
+knitr::opts_chunk$set(echo = TRUE)
+
+
+## ----data preprocessing------------------------------------------------------------------------------------------------------
+#install.packages("ggplot2")
+#install.packages("lattice")
+
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(lattice)
+library(ROSE)
+
+# load data
+data <- read.csv("sampled_data.csv")
+
+# View data format
+# according to data format convern the data format
+data$TARGET <- as.factor(data$TARGET)
+data$NAME_CONTRACT_TYPE <- as.factor(data$NAME_CONTRACT_TYPE)
+data$CODE_GENDER <- as.factor(data$CODE_GENDER)
+data$NAME_INCOME_TYPE <- as.factor(data$NAME_INCOME_TYPE)
+data$NAME_EDUCATION_TYPE <- as.factor(data$NAME_EDUCATION_TYPE)
+data$NAME_FAMILY_STATUS <- as.factor(data$NAME_FAMILY_STATUS)
+data$REGION_RATING_CLIENT <- as.factor(data$REGION_RATING_CLIENT)
+
+# Because we plan to use multiple models for comparison, we choose the three-part method. At the same time, due to the imbalance of the target of the data, the data set is divided into 70%, 15%, and 15%.
+
+set.seed(123)
+
+# train data
+train_index <- createDataPartition(data$TARGET, p = 0.7, list = FALSE)
+train_data <- data[train_index, ]
+temp_data <- data[-train_index, ]
+
+#valid data
+valid_index <- createDataPartition(temp_data$TARGET, p = 0.5, list = FALSE)
+valid_data <- temp_data[valid_index, ]
+
+#test data
+test_data <- temp_data[-valid_index, ]
+
+# Normalize numeric variables
+num_vars <- c("AMT_INCOME_TOTAL", "AMT_CREDIT", "DAYS_BIRTH")
+train_means <- apply(train_data[num_vars], 2, mean)
+train_sds <- apply(train_data[num_vars], 2, sd)
+
+
+train_data[num_vars] <- scale(train_data[num_vars], center = train_means, scale = train_sds)
+valid_data[num_vars] <- scale(valid_data[num_vars], center = train_means, scale = train_sds)
+test_data[num_vars] <- scale(test_data[num_vars], center = train_means, scale = train_sds)
+
+
+## ----Data distribution-non-oversample----------------------------------------------------------------------------------------
+
+# training SET
+train_distribution <- table(train_data$TARGET)
+train_percentage <- prop.table(train_distribution) * 100
+cat("Train Data Distribution:\n")
+print(train_distribution)
+cat("Percentage:\n")
+print(train_percentage)
+
+# valid set
+valid_distribution <- table(valid_data$TARGET)
+valid_percentage <- prop.table(valid_distribution) * 100
+cat("\nValidation Data Distribution:\n")
+print(valid_distribution)
+cat("Percentage:\n")
+print(valid_percentage)
+
+# test set
+test_distribution <- table(test_data$TARGET)
+test_percentage <- prop.table(test_distribution) * 100
+cat("\nTest Data Distribution:\n")
+print(test_distribution)
+cat("Percentage:\n")
+print(test_percentage)
+
+
+
+## ----Logistic Regression non-oversample--------------------------------------------------------------------------------------
+# Hot Encoding
+train_data_encoded <- model.matrix(~ . - 1, data = train_data[ , -which(names(train_data) == "TARGET")])
+val_data_encoded <- model.matrix(~ . - 1, data = valid_data[ , -which(names(valid_data) == "TARGET")])
+test_data_encoded <- model.matrix(~ . - 1, data = test_data[ , -which(names(test_data) == "TARGET")])
+
+# Add the target variable back into the one hot encoded dataframe
+train_data_encoded <- data.frame(train_data_encoded, TARGET = train_data$TARGET)
+val_data_encoded <- data.frame(val_data_encoded, TARGET = valid_data$TARGET)
+test_data_encoded <- data.frame(test_data_encoded, TARGET = test_data$TARGET)
+
+# create Logistic Regression model
+# Remove redundant features based on model output
+logistic_model <- glm(TARGET ~ . - NAME_CONTRACT_TYPERevolving.loans - NAME_INCOME_TYPEStudent,
+                       data = as.data.frame(train_data_encoded), 
+                       family = "binomial")
+
+
+# Make predictions on the validation set
+val_predictions_prob <- predict(logistic_model, newdata = val_data_encoded, type = "response")
+val_predictions <- ifelse(val_predictions_prob > 0.5, 1, 0)  
+
+# validation set confusion matrix 
+# Ensure that the predicted factor levels are [0, 1]
+val_predictions_factor <- factor(val_predictions, levels = c(0, 1))  
+val_target_factor <- factor(valid_data$TARGET, levels = c(0, 1))  
+
+val_confusion_matrix <- confusionMatrix(val_predictions_factor, val_target_factor)
+print(val_confusion_matrix)
+
+# test set confusion matrix 
+test_predictions_prob <- predict(logistic_model, newdata = test_data_encoded, type = "response")
+test_predictions <- ifelse(test_predictions_prob > 0.5, 1, 0)  
+
+
+test_predictions_factor <- factor(test_predictions, levels = c(0, 1))  
+test_target_factor <- factor(test_data$TARGET, levels = c(0, 1))  
+
+test_confusion_matrix <- confusionMatrix(test_predictions_factor, test_target_factor)
+print(test_confusion_matrix)
+
+#ROC
+# ROC
+roc_LogReg_nosample <- roc(test_data_encoded$TARGET, test_predictions_prob)
+
+
+## ----oversamp----------------------------------------------------------------------------------------------------------------
+
+train_data_balanced <- ROSE(TARGET ~ ., data = train_data, seed = 123)$data
+
+# hot coding
+train_data_encoded2 <- model.matrix(~ . - 1, data = train_data_balanced[, -which(names(train_data_balanced) == "TARGET")])
+val_data_encoded2 <- model.matrix(~ . - 1, data = valid_data[, -which(names(valid_data) == "TARGET")])
+test_data_encoded2 <- model.matrix(~ . - 1, data = test_data[, -which(names(test_data) == "TARGET")])
+
+# Add the target variable back into the one hot encoded dataframe
+train_data_encoded2 <- data.frame(train_data_encoded2, TARGET = train_data_balanced$TARGET)
+val_data_encoded2 <- data.frame(val_data_encoded2, TARGET = valid_data$TARGET)
+test_data_encoded2 <- data.frame(test_data_encoded2, TARGET = test_data$TARGET)
+
+# Creating a Logistic Regression Model
+logistic_model <- glm(TARGET ~ . - NAME_CONTRACT_TYPERevolving.loans - NAME_INCOME_TYPEStudent,
+                       data = as.data.frame(train_data_encoded2), 
+                       family = "binomial")
+
+# predict valid set
+val_predictions_prob <- predict(logistic_model, newdata = val_data_encoded2, type = "response")
+val_predictions <- ifelse(val_predictions_prob > 0.5, 1, 0)  
+
+# valid set confusion matrix
+val_predictions_factor <- factor(val_predictions, levels = c(0, 1))  
+val_target_factor <- factor(valid_data$TARGET, levels = c(0, 1))  
+val_confusion_matrix2 <- confusionMatrix(val_predictions_factor, val_target_factor)
+print(val_confusion_matrix2)
+
+# predict test set
+test_predictions_prob <- predict(logistic_model, newdata = test_data_encoded2, type = "response")
+test_predictions <- ifelse(test_predictions_prob > 0.5, 1, 0)  
+
+# test set confusion matrix
+test_predictions_factor <- factor(test_predictions, levels = c(0, 1)) 
+test_target_factor <- factor(test_data$TARGET, levels = c(0, 1)) 
+
+test_confusion_matrix2 <- confusionMatrix(test_predictions_factor, test_target_factor)
+print(test_confusion_matrix2)
+
+# ROC
+roc_LogReg <- roc(test_data_encoded2$TARGET, test_predictions_prob)
+

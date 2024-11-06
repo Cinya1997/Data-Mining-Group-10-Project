@@ -1,0 +1,296 @@
+---
+title: "Group project"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+date: "2024-10-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r data preprocessing}
+#install.packages("ggplot2")
+#install.packages("lattice")
+
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(lattice)
+
+# load data
+data <- read.csv("sampled_data.csv")
+
+# View data format
+# according to data format convern the data format
+data$TARGET <- as.factor(data$TARGET)
+data$NAME_CONTRACT_TYPE <- as.factor(data$NAME_CONTRACT_TYPE)
+data$CODE_GENDER <- as.factor(data$CODE_GENDER)
+data$NAME_INCOME_TYPE <- as.factor(data$NAME_INCOME_TYPE)
+data$NAME_EDUCATION_TYPE <- as.factor(data$NAME_EDUCATION_TYPE)
+data$NAME_FAMILY_STATUS <- as.factor(data$NAME_FAMILY_STATUS)
+data$REGION_RATING_CLIENT <- as.factor(data$REGION_RATING_CLIENT)
+
+# Because we plan to use multiple models for comparison, we choose the three-part method. At the same time, due to the imbalance of the target of the data, the data set is divided into 70%, 15%, and 15%.
+
+set.seed(123)
+
+# train data
+train_index <- createDataPartition(data$TARGET, p = 0.7, list = FALSE)
+train_data <- data[train_index, ]
+temp_data <- data[-train_index, ]
+
+#valid data
+valid_index <- createDataPartition(temp_data$TARGET, p = 0.5, list = FALSE)
+valid_data <- temp_data[valid_index, ]
+
+#test data
+test_data <- temp_data[-valid_index, ]
+
+# Normalize numeric variables
+num_vars <- c("AMT_INCOME_TOTAL", "AMT_CREDIT", "DAYS_BIRTH")
+train_means <- apply(train_data[num_vars], 2, mean)
+train_sds <- apply(train_data[num_vars], 2, sd)
+
+
+train_data[num_vars] <- scale(train_data[num_vars], center = train_means, scale = train_sds)
+valid_data[num_vars] <- scale(valid_data[num_vars], center = train_means, scale = train_sds)
+test_data[num_vars] <- scale(test_data[num_vars], center = train_means, scale = train_sds)
+
+# In order to take categorical variables into account, we need to perform one-hot encoding on the categorical variables and exclude the TARGET column.
+dummies <- dummyVars(~ . - TARGET, data = train_data)
+train_data_encoded <- predict(dummies, newdata = train_data) %>% as.data.frame()
+
+# add TARGET
+train_data_encoded$TARGET <- train_data$TARGET
+
+# Perform the same process on the validation set and the test set.
+valid_data_encoded <- predict(dummies, newdata = valid_data) %>% as.data.frame()
+valid_data_encoded$TARGET <- valid_data$TARGET
+
+test_data_encoded <- predict(dummies, newdata = test_data) %>% as.data.frame()
+test_data_encoded$TARGET <- test_data$TARGET
+
+# Make sure TARGET is a factor in the training, validation, and test sets
+train_data_encoded$TARGET <- as.factor(train_data_encoded$TARGET)
+valid_data_encoded$TARGET <- as.factor(valid_data_encoded$TARGET)
+test_data_encoded$TARGET <- as.factor(test_data_encoded$TARGET)
+
+
+```
+
+Oversample test data
+```{r}
+#install.packages("ROSE")
+library(ROSE)
+
+# Over-sampling the train_data,use ROse function
+train_data_oversampled <- ROSE(TARGET ~ ., data = train_data, seed = 123)$data
+
+# Normalize numeric variables
+train_means_oversampled <- apply(train_data_oversampled[num_vars], 2, mean) 
+train_sds_oversampled <- apply(train_data_oversampled[num_vars], 2, sd) 
+train_data_oversampled[num_vars] <- scale(train_data_oversampled[num_vars], center = train_means_oversampled, scale = train_sds_oversampled) 
+valid_data[num_vars] <- scale(valid_data[num_vars], center = train_means_oversampled, scale = train_sds_oversampled)
+test_data[num_vars] <- scale(test_data[num_vars], center = train_means_oversampled, scale = train_sds_oversampled)
+
+# One-hot encoding of categorical variables and excluding the TARGET column
+dummies2 <- dummyVars(~ . - TARGET, data = train_data_oversampled) # 
+train_data_encoded2 <- predict(dummies2, newdata = train_data_oversampled) %>% as.data.frame() 
+train_data_encoded2$TARGET <- train_data_oversampled$TARGET #
+
+# Perform the same process on the validation set and the test set.
+valid_data_encoded2 <- predict(dummies2, newdata = valid_data) %>% as.data.frame()
+valid_data_encoded2$TARGET <- valid_data$TARGET
+
+test_data_encoded2 <- predict(dummies2, newdata = test_data) %>% as.data.frame()
+test_data_encoded2$TARGET <- test_data$TARGET
+
+# 确保 TARGET 在训练、验证和测试集是 factor 类型
+train_data_encoded2$TARGET <- as.factor(train_data_encoded2$TARGET)
+valid_data_encoded2$TARGET <- as.factor(valid_data_encoded2$TARGET)
+test_data_encoded2$TARGET <- as.factor(test_data_encoded2$TARGET)
+
+```
+
+
+KNN-non oversample
+```{r KNN-non oversample}
+library(class)
+# KNN model predict
+# Separate features from labels
+train_features <- train_data_encoded %>% select(-TARGET)
+train_target <- train_data_encoded$TARGET
+
+valid_features <- valid_data_encoded %>% select(-TARGET)
+valid_target <- valid_data_encoded$TARGET
+
+test_features <- test_data_encoded %>% select(-TARGET)
+test_target <- test_data_encoded$TARGET
+
+# choose K=11，this is the best k
+k <- 11
+
+# using KNN
+knn_pred_valid <- knn(train = train_features, test = valid_features, cl = train_target, k = k)
+knn_pred_test <- knn(train = train_features, test = test_features, cl = train_target, k = k)
+
+# print result
+valid_confusion <- confusionMatrix(knn_pred_valid, valid_target)
+test_confusion <- confusionMatrix(knn_pred_test, test_target)
+
+# print result
+print("Validation set confusion matrix:")
+print(valid_confusion)
+
+print("Test set confusion matrix:")
+print(test_confusion)
+```
+
+
+KNN-oversample
+
+```{r KNN-oversample}
+
+library(class)
+# KNN model predict
+# Separate features from labels
+train_features2 <- train_data_encoded2 %>% select(-TARGET)
+train_target2 <- train_data_encoded2$TARGET
+
+valid_features2 <- valid_data_encoded2 %>% select(-TARGET)
+valid_target2 <- valid_data_encoded2$TARGET
+
+test_features2 <- test_data_encoded2 %>% select(-TARGET)
+test_target2 <- test_data_encoded2$TARGET
+
+# choose K=11，this is the best k
+k <- 13
+
+# using KNN
+knn_pred_valid2 <- knn(train = train_features2, test = valid_features2, cl = train_target2, k = k)
+knn_pred_test2 <- knn(train = train_features2, test = test_features2, cl = train_target2, k = k)
+
+# print result
+valid_confusion2 <- confusionMatrix(knn_pred_valid2, valid_target2)
+test_confusion2 <- confusionMatrix(knn_pred_test2, test_target2)
+
+# print result
+print("Validation set confusion matrix:")
+print(valid_confusion2)
+
+print("Test set confusion matrix:")
+print(test_confusion2)
+
+```
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+# Function to calculate record counts and rejection percentages
+get_summary <- function(data, dataset_name) {
+  total_records <- nrow(data)
+  rejected_count <- sum(data$TARGET == 1)
+  rejected_percentage <- (rejected_count / total_records) * 100
+  
+  return(data.frame(
+    Dataset = dataset_name,
+    Total_Records = total_records,
+    Rejected_Count = rejected_count,
+    Rejected_Percentage = rejected_percentage
+  ))
+}
+
+# Create summaries for each dataset
+original_train_summary <- get_summary(train_data, "Original Train Data")
+original_valid_summary <- get_summary(valid_data, "Original Validation Data")
+original_test_summary <- get_summary(test_data, "Original Test Data")
+
+oversampled_train_summary <- get_summary(train_data_oversampled, "Oversampled Train Data")
+oversampled_valid_summary <- get_summary(valid_data_encoded2, "Oversampled Validation Data")
+oversampled_test_summary <- get_summary(test_data_encoded2, "Oversampled Test Data")
+
+# Combine all summaries into one data frame
+summary_results <- rbind(
+  original_train_summary,
+  original_valid_summary,
+  original_test_summary,
+  oversampled_train_summary,
+  oversampled_valid_summary,
+  oversampled_test_summary
+)
+
+# Print the summary results
+print(summary_results)
+
+```
+
+```{r ROC}
+
+library(class)  
+library(pROC)   
+
+# KNN 
+get_probabilities_knn <- function(train_features, train_target, test_features, k) {
+  probabilities <- numeric(nrow(test_features))  
+  
+  for (i in 1:nrow(test_features)) {
+    knn_neighbors <- knn(train = train_features, test = test_features[i, , drop = FALSE], cl = train_target, k = k)
+    positive_count <- sum(knn_neighbors == "1")  
+    
+    prob_positive <- positive_count / k  
+    probabilities[i] <- prob_positive  
+  }
+  
+  return(probabilities)
+}
+
+get_probabilities_knn2 <- function(train_features2, train_target2, test_features2, k) {
+  probabilities2 <- numeric(nrow(test_features2))  
+  
+  for (i in 1:nrow(test_features2)) {
+    knn_neighbors2 <- knn(train = train_features2, test = test_features2[i, , drop = FALSE], cl = train_target2, k = k)
+    positive_count2 <- sum(knn_neighbors2 == "1")  
+    
+    prob_positive2 <- positive_count2 / k  
+    probabilities2[i] <- prob_positive2  
+  }
+  
+  return(probabilities2)
+}
+# Use KNN to calculate the probability of a test set
+knn_prob_test <- get_probabilities_knn(train_features, train_target, test_features, k)
+knn_prob_test2 <- get_probabilities_knn2(train_features2, train_target2, test_features2, k)
+
+# Make sure that the target variable is numeric
+test_target_numeric <- as.numeric(test_target) - 1 
+test_target_numeric2 <- as.numeric(test_target2) - 1 
+
+# ROC 
+roc_kNN <- roc(test_target_numeric, knn_prob_test)
+roc_kNN_nosample <- roc(test_target_numeric2, knn_prob_test2)
+
+```
+
+
+
+
+
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+

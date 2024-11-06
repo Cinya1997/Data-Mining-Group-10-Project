@@ -1,0 +1,255 @@
+## ----data preprocessing------------------------------------------------------------------------------------------------------
+#install.packages("ggplot2")
+#install.packages("lattice")
+
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(lattice)
+
+# load data
+data <- read.csv("sampled_data.csv")
+
+# View data format
+# according to data format convern the data format
+data$TARGET <- as.factor(data$TARGET)
+data$NAME_CONTRACT_TYPE <- as.factor(data$NAME_CONTRACT_TYPE)
+data$CODE_GENDER <- as.factor(data$CODE_GENDER)
+data$NAME_INCOME_TYPE <- as.factor(data$NAME_INCOME_TYPE)
+data$NAME_EDUCATION_TYPE <- as.factor(data$NAME_EDUCATION_TYPE)
+data$NAME_FAMILY_STATUS <- as.factor(data$NAME_FAMILY_STATUS)
+data$REGION_RATING_CLIENT <- as.factor(data$REGION_RATING_CLIENT)
+
+# Because we plan to use multiple models for comparison, we choose the three-part method. At the same time, due to the imbalance of the target of the data, the data set is divided into 70%, 15%, and 15%.
+
+set.seed(123)
+
+# train data
+train_index <- createDataPartition(data$TARGET, p = 0.7, list = FALSE)
+train_data <- data[train_index, ]
+temp_data <- data[-train_index, ]
+
+#valid data
+valid_index <- createDataPartition(temp_data$TARGET, p = 0.5, list = FALSE)
+valid_data <- temp_data[valid_index, ]
+
+#test data
+test_data <- temp_data[-valid_index, ]
+
+# Normalize numeric variables
+num_vars <- c("AMT_INCOME_TOTAL", "AMT_CREDIT", "DAYS_BIRTH")
+train_means <- apply(train_data[num_vars], 2, mean)
+train_sds <- apply(train_data[num_vars], 2, sd)
+
+
+train_data[num_vars] <- scale(train_data[num_vars], center = train_means, scale = train_sds)
+valid_data[num_vars] <- scale(valid_data[num_vars], center = train_means, scale = train_sds)
+test_data[num_vars] <- scale(test_data[num_vars], center = train_means, scale = train_sds)
+
+
+# In order to take categorical variables into account, we need to perform one-hot encoding on the categorical variables and exclude the TARGET column.
+dummies <- dummyVars(~ . - TARGET, data = train_data)
+train_data_encoded <- predict(dummies, newdata = train_data) %>% as.data.frame()
+
+# add TARGET
+train_data_encoded$TARGET <- train_data$TARGET
+
+# Perform the same process on the validation set and the test set.
+valid_data_encoded <- predict(dummies, newdata = valid_data) %>% as.data.frame()
+valid_data_encoded$TARGET <- valid_data$TARGET
+
+test_data_encoded <- predict(dummies, newdata = test_data) %>% as.data.frame()
+test_data_encoded$TARGET <- test_data$TARGET
+
+# Make sure TARGET is a factor in the training, validation, and test sets
+train_data_encoded$TARGET <- as.factor(train_data_encoded$TARGET)
+valid_data_encoded$TARGET <- as.factor(valid_data_encoded$TARGET)
+test_data_encoded$TARGET <- as.factor(test_data_encoded$TARGET)
+
+# calculate correlation
+#train_data_cleaned <- train_data_encoded %>% select(-NAME_INCOME_TYPE.Student)
+#correlation_matrix <- cor(train_data_cleaned[, sapply(train_data_cleaned, is.numeric)])  # 只选择数值型变量
+#corrplot(correlation_matrix, method = "color", type = "upper", 
+         #col =  colorRampPalette(c("blue", "white", "#FF0000"))(200),
+         #tl.col = "black", tl.srt = 45,  
+         #title = "Correlation Matrix of Numeric Features", 
+         #mar = c(0, 0, 1, 0), 
+         #tl.cex = 0.3)  # 调整文本标签大小
+
+
+
+
+## ----XGBoost non-oversample--------------------------------------------------------------------------------------------------
+
+#install.packages("xgboost")
+library(xgboost)
+library(dplyr)
+library(caret)
+
+# Convert feature columns to numeric types
+
+train_data_encoded <- train_data_encoded %>%
+    mutate(across(-TARGET, as.numeric), 
+           TARGET = as.numeric(as.character(TARGET)))
+
+valid_data_encoded <- valid_data_encoded %>%
+    mutate(across(-TARGET, as.numeric), 
+           TARGET = as.numeric(as.character(TARGET)))
+
+test_data_encoded <- test_data_encoded %>%
+    mutate(across(-TARGET, as.numeric), 
+           TARGET = as.numeric(as.character(TARGET)))
+
+
+#unique(train_data_encoded[[ncol(train_data_encoded)]])
+
+# create XGBoost model
+xgb_model_no_oversample <- xgboost(
+    data = as.matrix(train_data_encoded[, -ncol(train_data_encoded)]),  
+    label = train_data_encoded[[ncol(train_data_encoded)]], 
+    nrounds = 1000, 
+    max_depth = 7, 
+    eta = 0.01, 
+    objective = "binary:logistic", 
+    eval_metric = "logloss",
+    min_child_weight = 1,
+    subsample = 0.7,
+     scale_pos_weight = 3.558,
+    colsample_bytree = 0.7
+)
+
+# predict on valid_data and test data
+pred_no_oversample_valid <- predict(xgb_model_no_oversample, as.matrix(valid_data_encoded[,-30]))
+pred_valid_no_oversample <- ifelse(pred_no_oversample_valid > 0.5, 1, 0)
+
+pred_no_oversample_test <- predict(xgb_model_no_oversample, as.matrix(test_data_encoded[,-30]))
+pred_test_no_oversample <- ifelse(pred_no_oversample_test > 0.5, 1, 0)
+
+pred_valid_no_oversample <- factor(pred_valid_no_oversample, levels = c(0, 1))
+valid_data_encoded$TARGET <- factor(valid_data_encoded$TARGET, levels = c(0, 1))
+
+pred_test_no_oversample <- factor(pred_test_no_oversample, levels = c(0, 1))
+test_data_encoded$TARGET <- factor(test_data_encoded$TARGET, levels = c(0, 1))
+
+
+# calculate confusion matrix
+confusion_matrix_no_oversample_valid <- confusionMatrix(pred_valid_no_oversample, valid_data_encoded$TARGET)
+print("non-oversample_valid:")
+print(confusion_matrix_no_oversample_valid)
+
+confusion_matrix_no_oversample_test <- confusionMatrix(pred_test_no_oversample, test_data_encoded$TARGET)
+print("non-oversample_test:")
+print(confusion_matrix_no_oversample_test)
+
+# ROC
+pred_test_no_oversample <- as.numeric(as.character(pred_test_no_oversample))
+test_target_numeric <- as.numeric(test_data_encoded$TARGET) - 1  
+roc_xgboost_nonsample <- roc(test_target_numeric, pred_test_no_oversample)
+
+
+## ----oversample data preprocessing-------------------------------------------------------------------------------------------
+#install.packages("ROSE")
+library(ROSE)
+# Over-sampling the train_data,use ROse function
+train_data_oversampled <- ROSE(TARGET ~ ., data = train_data, seed = 123)$data
+
+# Normalize numeric variables
+train_means_oversampled <- apply(train_data_oversampled[num_vars], 2, mean) 
+train_sds_oversampled <- apply(train_data_oversampled[num_vars], 2, sd) 
+train_data_oversampled[num_vars] <- scale(train_data_oversampled[num_vars], center = train_means_oversampled, scale = train_sds_oversampled) 
+valid_data[num_vars] <- scale(valid_data[num_vars], center = train_means_oversampled, scale = train_sds_oversampled)
+test_data[num_vars] <- scale(test_data[num_vars], center = train_means_oversampled, scale = train_sds_oversampled)
+
+# One-hot encoding of categorical variables and excluding the TARGET column
+dummies2 <- dummyVars(~ . - TARGET, data = train_data_oversampled) # 
+train_data_encoded2 <- predict(dummies2, newdata = train_data_oversampled) %>% as.data.frame() 
+train_data_encoded2$TARGET <- train_data_oversampled$TARGET #
+
+# Perform the same process on the validation set and the test set.
+valid_data_encoded2 <- predict(dummies2, newdata = valid_data) %>% as.data.frame()
+valid_data_encoded2$TARGET <- valid_data$TARGET
+
+test_data_encoded2 <- predict(dummies2, newdata = test_data) %>% as.data.frame()
+test_data_encoded2$TARGET <- test_data$TARGET
+
+# make sure each features are the same form
+train_data_encoded2$TARGET <- as.factor(train_data_encoded2$TARGET)
+valid_data_encoded2$TARGET <- as.factor(valid_data_encoded2$TARGET)
+test_data_encoded2$TARGET <- as.factor(test_data_encoded2$TARGET)
+
+
+
+## ----XGBOOST oversample------------------------------------------------------------------------------------------------------
+#install.packages("ROSE")
+library(xgboost)
+library(ROSE)
+library(caret)
+# Check and modify column names
+colnames(train_data_encoded2) <- make.names(colnames(train_data_encoded2))
+colnames(valid_data_encoded2) <- make.names(colnames(valid_data_encoded2))
+colnames(test_data_encoded2) <- make.names(colnames(test_data_encoded2))
+
+# make sure colnames is ok
+#print(colnames(train_data_encoded2))
+
+# according to the data proportion I choose double
+N_value <- sum(table(train_data_encoded2$TARGET))  
+
+
+# use ROSE to oversample
+oversampled_data <- ovun.sample(TARGET ~ ., data = train_data_encoded2, method = "over", 
+                                N = N_value)$data
+
+# check the balance of data after oversampling
+table(oversampled_data$TARGET)
+levels(oversampled_data$TARGET)
+
+levels(oversampled_data$TARGET)
+oversampled_data[[ncol(oversampled_data)]] <- as.numeric(factor(oversampled_data[[ncol(oversampled_data)]])) - 1
+
+# train a new XGBoost model
+xgb_model_oversample <- xgboost(
+    data = as.matrix(oversampled_data[, -30]),  
+    label = as.numeric(oversampled_data[[30]]),  
+    nrounds = 1000, 
+    max_depth = 7, 
+    eta = 0.01, 
+    objective = "binary:logistic", 
+    eval_metric = "logloss",
+    nfold = 5,
+    print_every_n=10,
+    scale_pos_weight = 12,
+    subsample = 0.7,
+    colsample_bytree = 0.8
+)
+
+
+# predict on valid_data and test data
+pred_oversample_valid <- predict(xgb_model_oversample, as.matrix(valid_data_encoded2[,-30]))
+pred_valid_oversample <- ifelse(pred_oversample_valid > 0.5, 1, 0)
+
+pred_oversample_test <- predict(xgb_model_oversample, as.matrix(test_data_encoded2[,-30]))
+pred_test_oversample <- ifelse(pred_oversample_test > 0.5, 1, 0)
+
+pred_valid_oversample <- factor(pred_valid_oversample, levels = c(0, 1))
+valid_data_encoded$TARGET <- factor(valid_data_encoded2$TARGET, levels = c(0, 1))
+pred_test_oversample <- factor(pred_test_oversample, levels = c(0, 1))
+test_data_encoded$TARGET <- factor(test_data_encoded2$TARGET, levels = c(0, 1))
+
+
+# calculate confusion matrix
+confusion_matrix_oversample_valid <- confusionMatrix(pred_valid_oversample, valid_data_encoded2$TARGET)
+print("oversample_valid:")
+print(confusion_matrix_oversample_valid)
+
+
+confusion_matrix_oversample_test <- confusionMatrix(pred_test_oversample, test_data_encoded2$TARGET)
+print("oversample_test:")
+print(confusion_matrix_oversample_test)
+
+# ROC
+pred_test_oversample <- as.numeric(as.character(pred_test_oversample))
+test_target_numeric2 <- as.numeric(test_data_encoded2$TARGET) - 1  
+roc_xgboost <- roc(test_target_numeric2, pred_test_oversample)
+
+
